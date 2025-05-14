@@ -1,23 +1,41 @@
-FROM docker:24.0-dind
+FROM golang:1.22-alpine
 
-# Install docker-compose and other dependencies
-RUN apk add --no-cache docker-compose python3 bash git
+# Install required dependencies
+RUN apk add --no-cache bash nginx redis curl openresty
 
-# Copy the whole repo
+# Set up work directories 
 WORKDIR /app
 COPY . /app
 
-# Create a more robust entrypoint script
+# Set up NGINX RTMP
+RUN mkdir -p /opt/data/hls /hls
+COPY ./rtmp/live.conf /etc/nginx/nginx.conf
+
+# Set up edge server
+COPY ./edge/nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+COPY ./edge/router /router/
+
+# Create startup script
 RUN echo '#!/bin/sh' > /entrypoint.sh && \
-    echo 'dockerd &' >> /entrypoint.sh && \
-    echo 'echo "Waiting for Docker daemon to start..."' >> /entrypoint.sh && \
-    echo 'until docker info > /dev/null 2>&1; do' >> /entrypoint.sh && \
-    echo '  echo "Docker daemon not running yet, sleeping..."' >> /entrypoint.sh && \
-    echo '  sleep 2' >> /entrypoint.sh && \
-    echo 'done' >> /entrypoint.sh && \
-    echo 'echo "Docker daemon started successfully!"' >> /entrypoint.sh && \
-    echo 'cd /app && docker-compose up' >> /entrypoint.sh && \
+    echo 'echo "Starting services directly..."' >> /entrypoint.sh && \
+    echo 'cd /app' >> /entrypoint.sh && \
+    echo '# Start Redis' >> /entrypoint.sh && \
+    echo 'redis-server --daemonize yes' >> /entrypoint.sh && \
+    echo '# Start NGINX for RTMP' >> /entrypoint.sh && \
+    echo 'nginx -c /etc/nginx/nginx.conf &' >> /entrypoint.sh && \
+    echo '# Start API service' >> /entrypoint.sh && \
+    echo 'cd /app/stream-handler && go run main.go api &' >> /entrypoint.sh && \
+    echo '# Start Discovery service' >> /entrypoint.sh && \
+    echo 'cd /app/stream-handler && HLS_PATH=/hls IP=localhost DISCOVERY_API_URL=http://localhost:9090 go run main.go discovery &' >> /entrypoint.sh && \
+    echo '# Start OpenResty for edge' >> /entrypoint.sh && \
+    echo '/usr/local/openresty/bin/openresty -c /usr/local/openresty/nginx/conf/nginx.conf &' >> /entrypoint.sh && \
+    echo '# Keep container running' >> /entrypoint.sh && \
+    echo 'echo "All services started"' >> /entrypoint.sh && \
+    echo 'tail -f /dev/null' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
 
-# Run the entrypoint script
-ENTRYPOINT ["/entrypoint.sh"] 
+# Run the services
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Expose the necessary ports
+EXPOSE 1935 8080 9090 6379 8081 
