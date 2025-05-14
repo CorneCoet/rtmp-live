@@ -32,11 +32,9 @@ RUN go mod tidy && go build -o /app/api-server main.go
 
 # Set up supervisord to manage all services
 RUN mkdir -p /etc/supervisor.d/
-COPY supervisord.conf /etc/supervisord.conf
 
-# Create the supervisord.conf if it doesn't exist
-RUN if [ ! -f /etc/supervisord.conf ]; then \
-    echo '[supervisord]' > /etc/supervisord.conf && \
+# Create supervisord.conf file
+RUN echo '[supervisord]' > /etc/supervisord.conf && \
     echo 'nodaemon=true' >> /etc/supervisord.conf && \
     echo 'user=root' >> /etc/supervisord.conf && \
     echo '' >> /etc/supervisord.conf && \
@@ -67,8 +65,7 @@ RUN if [ ! -f /etc/supervisord.conf ]; then \
     echo '[program:openresty]' >> /etc/supervisord.conf && \
     echo 'command=/usr/local/openresty/bin/openresty -g "daemon off;"' >> /etc/supervisord.conf && \
     echo 'autostart=true' >> /etc/supervisord.conf && \
-    echo 'autorestart=true' >> /etc/supervisord.conf; \
-fi
+    echo 'autorestart=true' >> /etc/supervisord.conf
 
 # Expose all needed ports
 EXPOSE 1935 8080 9090 6379 8081
