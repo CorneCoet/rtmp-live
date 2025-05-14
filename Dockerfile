@@ -9,4 +9,4 @@ RUN go mod tidy
 RUN go build -o /app/server ./main.go
 
 # Command to run the executable
-CMD ["/app/server"]
+CMD ["/app/server"] 
