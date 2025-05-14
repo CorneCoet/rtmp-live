@@ -1,56 +1,78 @@
 FROM golang:1.22-alpine
 
-# Install required dependencies
-RUN apk add --no-cache bash nginx redis curl
+# Install all required dependencies
+RUN apk add --no-cache \
+    bash \
+    curl \
+    redis \
+    nginx \
+    supervisor \
+    openresty \
+    openresty-pcre \
+    git \
+    wget \
+    build-base \
+    pcre-dev \
+    zlib-dev
 
-# Set up work directories 
+# Set up work directories
 WORKDIR /app
 COPY . /app
 
-# Create more robust startup script with error handling
-RUN echo '#!/bin/sh' > /entrypoint.sh && \
-    echo 'set -e' >> /entrypoint.sh && \
-    echo 'echo "Starting services with debug logging..."' >> /entrypoint.sh && \
-    echo 'cd /app' >> /entrypoint.sh && \
-    echo '' >> /entrypoint.sh && \
-    echo '# Start Redis' >> /entrypoint.sh && \
-    echo 'echo "Starting Redis..."' >> /entrypoint.sh && \
-    echo 'redis-server --daemonize yes || echo "Redis failed to start"' >> /entrypoint.sh && \
-    echo 'sleep 2' >> /entrypoint.sh && \
-    echo 'redis-cli ping || echo "Redis not responding"' >> /entrypoint.sh && \
-    echo '' >> /entrypoint.sh && \
-    echo '# Start NGINX for RTMP' >> /entrypoint.sh && \
-    echo 'echo "Starting NGINX..."' >> /entrypoint.sh && \
-    echo 'ls -la /etc/nginx/' >> /entrypoint.sh && \
-    echo 'cat /etc/nginx/nginx.conf' >> /entrypoint.sh && \
-    echo 'mkdir -p /opt/data/hls /hls' >> /entrypoint.sh && \
-    echo 'nginx || echo "NGINX failed to start"' >> /entrypoint.sh && \
-    echo '' >> /entrypoint.sh && \
-    echo '# Start API service' >> /entrypoint.sh && \
-    echo 'echo "Starting API service..."' >> /entrypoint.sh && \
-    echo 'cd /app/stream-handler' >> /entrypoint.sh && \
-    echo 'ls -la' >> /entrypoint.sh && \
-    echo 'REDIS_ADDR=localhost:6379 go run main.go api &' >> /entrypoint.sh && \
-    echo 'API_PID=$!' >> /entrypoint.sh && \
-    echo 'echo "API service started with PID: $API_PID"' >> /entrypoint.sh && \
-    echo '' >> /entrypoint.sh && \
-    echo '# Basic status check and monitoring' >> /entrypoint.sh && \
-    echo 'echo "Environment status:"' >> /entrypoint.sh && \
-    echo 'ps aux' >> /entrypoint.sh && \
-    echo 'netstat -tulpn' >> /entrypoint.sh && \
-    echo '' >> /entrypoint.sh && \
-    echo '# Keep container running and monitor processes' >> /entrypoint.sh && \
-    echo 'echo "All services started, monitoring..."' >> /entrypoint.sh && \
-    echo 'while true; do' >> /entrypoint.sh && \
-    echo '  sleep 60' >> /entrypoint.sh && \
-    echo '  echo "Service status check:"' >> /entrypoint.sh && \
-    echo '  ps aux | grep -v grep | grep -E "nginx|redis|go"' >> /entrypoint.sh && \
-    echo '  netstat -tulpn' >> /entrypoint.sh && \
-    echo 'done' >> /entrypoint.sh && \
-    chmod +x /entrypoint.sh
+# Set up NGINX RTMP
+RUN mkdir -p /opt/data/hls /hls
+COPY ./rtmp/live.conf /etc/nginx/nginx.conf
 
-# Run the services
-ENTRYPOINT ["/entrypoint.sh"]
+# Set up edge server
+COPY ./edge/nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+COPY ./edge/router /router/
 
-# Expose the necessary ports
-EXPOSE 1935 8080 9090 6379 8081 
+# Build the stream-handler
+WORKDIR /app/stream-handler
+RUN go mod tidy && go build -o /app/api-server main.go
+
+# Set up supervisord to manage all services
+RUN mkdir -p /etc/supervisor.d/
+COPY supervisord.conf /etc/supervisord.conf
+
+# Create the supervisord.conf if it doesn't exist
+RUN if [ ! -f /etc/supervisord.conf ]; then \
+    echo '[supervisord]' > /etc/supervisord.conf && \
+    echo 'nodaemon=true' >> /etc/supervisord.conf && \
+    echo 'user=root' >> /etc/supervisord.conf && \
+    echo '' >> /etc/supervisord.conf && \
+    echo '[program:redis]' >> /etc/supervisord.conf && \
+    echo 'command=redis-server --protected-mode no' >> /etc/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisord.conf && \
+    echo '' >> /etc/supervisord.conf && \
+    echo '[program:nginx]' >> /etc/supervisord.conf && \
+    echo 'command=nginx -g "daemon off;"' >> /etc/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisord.conf && \
+    echo '' >> /etc/supervisord.conf && \
+    echo '[program:api]' >> /etc/supervisord.conf && \
+    echo 'command=/app/api-server api' >> /etc/supervisord.conf && \
+    echo 'directory=/app/stream-handler' >> /etc/supervisord.conf && \
+    echo 'environment=REDIS_ADDR="localhost:6379"' >> /etc/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisord.conf && \
+    echo '' >> /etc/supervisord.conf && \
+    echo '[program:discovery]' >> /etc/supervisord.conf && \
+    echo 'command=/app/api-server discovery' >> /etc/supervisord.conf && \
+    echo 'directory=/app/stream-handler' >> /etc/supervisord.conf && \
+    echo 'environment=HLS_PATH="/hls",IP="localhost",DISCOVERY_API_URL="http://localhost:9090"' >> /etc/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisord.conf && \
+    echo '' >> /etc/supervisord.conf && \
+    echo '[program:openresty]' >> /etc/supervisord.conf && \
+    echo 'command=/usr/local/openresty/bin/openresty -g "daemon off;"' >> /etc/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisord.conf; \
+fi
+
+# Expose all needed ports
+EXPOSE 1935 8080 9090 6379 8081
+
+# Start supervisord
+CMD ["supervisord", "-c", "/etc/supervisord.conf"] 

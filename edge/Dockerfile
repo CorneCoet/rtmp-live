@@ -1,4 +1,13 @@
-FROM openresty/openresty:1.21.4.1-7-alpine-fat
+FROM openresty/openresty:alpine
 
-RUN luarocks install lua-cjson
-RUN luarocks install lua-resty-http
+# Copy nginx configuration
+COPY nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+
+# Copy router files
+COPY router /router/
+
+# Expose the edge server port
+EXPOSE 8081
+
+# Command to run OpenResty
+CMD ["/usr/local/openresty/bin/openresty", "-g", "daemon off;"]
