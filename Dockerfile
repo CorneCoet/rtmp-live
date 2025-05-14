@@ -19,6 +19,17 @@ RUN apk add --no-cache \
 WORKDIR /app
 COPY . /app
 
+# Create process monitor script (similar to docker ps)
+RUN echo '#!/bin/sh' > /process-monitor.sh && \
+    echo 'echo "=== RUNNING PROCESSES (LIKE DOCKER PS) ===="' >> /process-monitor.sh && \
+    echo 'echo "CONTAINER ID   IMAGE   STATUS   PORTS   NAMES"' >> /process-monitor.sh && \
+    echo 'echo "------------   -----   ------   -----   -----"' >> /process-monitor.sh && \
+    echo 'ps -o pid,etime,pcpu,pmem,args -C nginx,redis-server,supervisord,openresty | grep -v grep' >> /process-monitor.sh && \
+    echo 'echo ""' >> /process-monitor.sh && \
+    echo 'echo "PORT MAPPINGS:"' >> /process-monitor.sh && \
+    echo 'netstat -tulpn | grep -E "nginx|redis|resty|api-server"' >> /process-monitor.sh && \
+    chmod +x /process-monitor.sh
+
 # Check if NGINX configs exist
 RUN echo "Checking NGINX configs:" && \
     ls -la ./rtmp/ || echo "rtmp directory missing" && \
@@ -71,6 +82,15 @@ RUN echo '[supervisord]' > /etc/supervisord.conf && \
     echo 'startsecs=0' >> /etc/supervisord.conf && \
     echo 'autorestart=false' >> /etc/supervisord.conf && \
     echo 'priority=1' >> /etc/supervisord.conf && \
+    echo 'stdout_logfile=/dev/stdout' >> /etc/supervisord.conf && \
+    echo 'stdout_logfile_maxbytes=0' >> /etc/supervisord.conf && \
+    echo 'stderr_logfile=/dev/stderr' >> /etc/supervisord.conf && \
+    echo 'stderr_logfile_maxbytes=0' >> /etc/supervisord.conf && \
+    echo '' >> /etc/supervisord.conf && \
+    echo '[program:process-monitor]' >> /etc/supervisord.conf && \
+    echo 'command=/bin/sh -c "while true; do /process-monitor.sh; sleep 30; done"' >> /etc/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisord.conf && \
     echo 'stdout_logfile=/dev/stdout' >> /etc/supervisord.conf && \
     echo 'stdout_logfile_maxbytes=0' >> /etc/supervisord.conf && \
     echo 'stderr_logfile=/dev/stderr' >> /etc/supervisord.conf && \
