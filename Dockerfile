@@ -1,12 +1,18 @@
-FROM golang:1.22-alpine
+FROM docker:24.0-dind
 
+# Install docker-compose and other dependencies
+RUN apk add --no-cache docker-compose python3 bash git
+
+# Copy the whole repo
 WORKDIR /app
+COPY . /app
 
-COPY . .
-RUN go mod tidy
+# Entrypoint script
+RUN echo '#!/bin/sh' > /entrypoint.sh && \
+    echo 'dockerd &' >> /entrypoint.sh && \
+    echo 'sleep 5' >> /entrypoint.sh && \
+    echo 'cd /app && docker-compose up' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
 
-# Build the application
-RUN go build -o /app/server ./main.go
-
-# Command to run the executable
-CMD ["/app/server"] 
+# Run the entrypoint script
+ENTRYPOINT ["/entrypoint.sh"] 
