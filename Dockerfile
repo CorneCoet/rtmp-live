@@ -8,7 +8,6 @@ RUN apk add --no-cache \
     nginx \
     supervisor \
     openresty \
-    openresty-pcre \
     git \
     wget \
     build-base \
